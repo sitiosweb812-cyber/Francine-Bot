@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import google.generativeai as genai
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from telegram.error import Conflict
 
 # --- 1. CONFIGURACIÓN ---
 logging.basicConfig(level=logging.INFO)
@@ -22,7 +23,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "Francine V42: Sin censura. 🍷", 200
+    return "Francine V43: Inmortal y Sin Censura. 🍷", 200
 
 # --- 3. LÓGICA DEL BOT ---
 def buscar_en_tmdb(query):
@@ -47,7 +48,7 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         target = 'models/gemini-1.5-flash' if 'models/gemini-1.5-flash' in models else models[0]
         
-        # --- MODIFICACIÓN V42: FILTROS APAGADOS ---
+        # Filtros apagados para que no se asuste con Tarantino, Terror, etc.
         model = genai.GenerativeModel(target, safety_settings=[
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -83,26 +84,30 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await espera.edit_text(txt)
     except Exception as e:
         log_info(f"Error IA: {e}")
-        await espera.edit_text("Hubo un desliz en la cava. Reintentá en unos segundos.")
+        await espera.edit_text("Hubo un desliz en la cava (Cupo de IA lleno o error temporal). Reintentá más tarde.")
 
-# --- 4. ARRANQUE DEL BOT ---
+# --- 4. ARRANQUE DEL BOT (ESCUDO ANTI-CONFLICTOS) ---
 def run_bot():
+    log_info("🧹 Limpiando conexiones viejas...")
     try:
-        log_info("🧹 Limpiando conexiones viejas...")
-        requests.get(f"https://api.telegram.org/bot{TOKEN}/deleteWebhook?drop_pending_updates=True")
-        time.sleep(2)
-        
-        log_info("🚀 Lanzando Francine V42...")
-        
-        asyncio.set_event_loop(asyncio.new_event_loop())
-        
-        application = Application.builder().token(TOKEN).build()
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje))
-        
-        application.run_polling(drop_pending_updates=True, stop_signals=())
-        
-    except Exception as e:
-        log_info(f"Falla crítica en el bot: {e}")
+        requests.get(f"https://api.telegram.org/bot{TOKEN}/deleteWebhook?drop_pending_updates=True", timeout=5)
+    except: pass
+    time.sleep(2)
+    
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    application = Application.builder().token(TOKEN).build()
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje))
+    
+    while True:
+        try:
+            log_info("🚀 Lanzando Francine V43...")
+            application.run_polling(drop_pending_updates=True, stop_signals=())
+        except Conflict:
+            log_info("⚠️ Fantasma de Telegram detectado (Conflict). Esperando 10s para reintentar...")
+            time.sleep(10)
+        except Exception as e:
+            log_info(f"Falla en el bot: {e}. Reintentando en 5s...")
+            time.sleep(5)
 
 if __name__ == "__main__":
     bot_thread = threading.Thread(target=run_bot, daemon=True)
