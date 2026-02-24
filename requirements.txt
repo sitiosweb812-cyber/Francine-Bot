@@ -1,0 +1,5 @@
+python-telegram-bot
+requests
+pytz
+google-generativeai
+nest-asyncio
