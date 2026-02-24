@@ -22,7 +22,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "Francine V41: Sistema Estable. 🍷", 200
+    return "Francine V42: Sin censura. 🍷", 200
 
 # --- 3. LÓGICA DEL BOT ---
 def buscar_en_tmdb(query):
@@ -41,14 +41,21 @@ def buscar_en_tmdb(query):
 async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text: return
     log_info(f"Mensaje de usuario: {update.message.text}")
-    espera = await update.message.reply_text("🍷 Francine está eligiendo...")
+    espera = await update.message.reply_text("🍷 Francine está buscando en la cava...")
     
     try:
         models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         target = 'models/gemini-1.5-flash' if 'models/gemini-1.5-flash' in models else models[0]
-        model = genai.GenerativeModel(target)
         
-        prompt = f"Sos Francine, sommelier de cine argentina. Respondé en 2 frases. Etiqueta: [BUSCAR: Titulo Original]. Pedido: {update.message.text}"
+        # --- MODIFICACIÓN V42: FILTROS APAGADOS ---
+        model = genai.GenerativeModel(target, safety_settings=[
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+        ])
+        
+        prompt = f"Sos Francine, sommelier de cine argentina. Respondé en 2 frases cortas. Etiqueta: [BUSCAR: Titulo Original]. Pedido: {update.message.text}"
         response = model.generate_content(prompt)
         txt = response.text
         
@@ -76,34 +83,30 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await espera.edit_text(txt)
     except Exception as e:
         log_info(f"Error IA: {e}")
-        await espera.edit_text("Hubo un desliz en la cava. Reintentá.")
+        await espera.edit_text("Hubo un desliz en la cava. Reintentá en unos segundos.")
 
-# --- 4. ARRANQUE DEL BOT (LA SOLUCIÓN EXACTA) ---
+# --- 4. ARRANQUE DEL BOT ---
 def run_bot():
     try:
         log_info("🧹 Limpiando conexiones viejas...")
         requests.get(f"https://api.telegram.org/bot{TOKEN}/deleteWebhook?drop_pending_updates=True")
         time.sleep(2)
         
-        log_info("🚀 Lanzando Francine...")
+        log_info("🚀 Lanzando Francine V42...")
         
-        # 1. Le creamos un entorno seguro en este segundo hilo
         asyncio.set_event_loop(asyncio.new_event_loop())
         
         application = Application.builder().token(TOKEN).build()
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje))
         
-        # 2. stop_signals=() evita el error crítico de "set_wakeup_fd"
         application.run_polling(drop_pending_updates=True, stop_signals=())
         
     except Exception as e:
         log_info(f"Falla crítica en el bot: {e}")
 
 if __name__ == "__main__":
-    # Arrancamos a Francine en segundo plano
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
     
-    # Abrimos el puerto para Render en el hilo principal
     log_info(f"📢 Abriendo puerto {PORT}...")
     web_app.run(host='0.0.0.0', port=PORT)
