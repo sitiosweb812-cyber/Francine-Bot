@@ -1,123 +1,126 @@
-import os
-import logging
-import requests
-import threading
-import urllib.parse
+import os, logging, requests, threading, urllib.parse, pytz, time
 from flask import Flask
-import pytz
 from datetime import datetime, timedelta
 import google.generativeai as genai
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from telegram.error import Conflict
 
-# --- CONFIGURACIÓN ---
-logging.basicConfig(level=logging.INFO)
+# --- CONFIGURACIÓN DE NIVEL EXPERTO ---
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 TOKEN = os.environ.get('TELEGRAM_TOKEN', '').strip()
 TMDB_KEY = os.environ.get('TMDB_KEY', '').strip()
 GEMINI_KEY = os.environ.get('GEMINI_API_KEY', '').strip()
 
+# Inicialización de Google
 genai.configure(api_key=GEMINI_KEY)
 
-# --- SERVIDOR WEB ---
+# --- SERVIDOR WEB (Health Check) ---
 web_app = Flask(__name__)
 @web_app.route('/')
-def home(): return "Francine V35 Online. 🍷", 200
+def home(): return "Francine Engine V37: Active", 200
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
     web_app.run(host='0.0.0.0', port=port)
 
-# --- MOTOR TMDB ---
+# --- LÓGICA DE DATOS ---
 def buscar_en_tmdb(query):
-    url = "https://api.themoviedb.org/3/search/movie"
     try:
         q = query.replace("[BUSCAR:", "").replace("]", "").strip()
-        print(f"🔎 Buscando en TMDB: {q}", flush=True)
-        res = requests.get(url, params={'api_key': TMDB_KEY, 'query': q, 'language': 'es-AR'}, timeout=10).json()
+        search_url = "https://api.themoviedb.org/3/search/movie"
+        res = requests.get(search_url, params={'api_key': TMDB_KEY, 'query': q, 'language': 'es-AR'}, timeout=10).json()
         if res.get('results'):
             m_id = res['results'][0]['id']
             return requests.get(f"https://api.themoviedb.org/3/movie/{m_id}", 
-                               params={'api_key': TMDB_KEY, 'language': 'es-AR', 'append_to_response': 'videos'}, 
-                               timeout=10).json()
+                               params={'api_key': TMDB_KEY, 'language': 'es-AR', 'append_to_response': 'videos'}, timeout=10).json()
     except Exception as e:
-        print(f"❌ Error TMDB: {e}", flush=True)
+        logger.error(f"Error en TMDB: {e}")
     return None
+
+# --- SELECTOR DINÁMICO DE MODELO (Evita el 404) ---
+def get_best_model():
+    try:
+        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        # Buscamos por prioridad
+        for target in ['models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'models/gemini-pro']:
+            if target in models:
+                logger.info(f"🚀 Motor IA seleccionado: {target}")
+                return genai.GenerativeModel(target)
+        return genai.GenerativeModel(models[0])
+    except Exception as e:
+        logger.error(f"Error seleccionando modelo: {e}")
+        return genai.GenerativeModel('gemini-1.5-flash')
 
 # --- MANEJADOR DE MENSAJES ---
 async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_txt = update.message.text
-    print(f"📥 Mensaje recibido: {user_txt}", flush=True)
-    espera = await update.message.reply_text("🍷 Francine está eligiendo...")
+    if not update.message or not update.message.text: return
     
-    prompt = f"Sos Francine, sommelier de cine argentina. Respondé en 2 frases cortas. RECOMENDÁ UNA PELÍCULA. Etiqueta obligatoria: [BUSCAR: Titulo Original]. Pedido: {user_txt}"
+    espera = await update.message.reply_text("🍷 Francine está eligiendo el maridaje...")
     
     try:
-        # Configuración para evitar bloqueos por seguridad
-        model = genai.GenerativeModel('gemini-1.5-flash',
-                                    safety_settings=[
-                                        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                                        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                                        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                                        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-                                    ])
+        model = get_best_model()
+        prompt = (f"Sos Francine, sommelier de cine argentina. Recomendá una peli corta basándote en: {update.message.text}. "
+                  "Respondé en 2 frases máximo. Obligatorio incluir al final: [BUSCAR: Titulo Original].")
         
         response = model.generate_content(prompt)
         txt = response.text
-        print(f"🤖 Respuesta IA: {txt}", flush=True)
         
         if "[BUSCAR:" in txt:
             p_query = txt.split("[BUSCAR:")[1].split("]")[0].strip()
             peli = buscar_en_tmdb(p_query)
             
             if peli:
-                tit = peli.get('title')
-                orig = peli.get('original_title', tit)
-                año = peli.get('release_date', '????')[:4]
-                dur = peli.get('runtime', 0)
-                resumen = peli.get('overview', 'Sin descripción.')
-                imdb = peli.get('imdb_id')
-                poster = peli.get('poster_path')
+                tit = peli.get('title'); orig = peli.get('original_title', tit)
+                año = peli.get('release_date', '????')[:4]; dur = peli.get('runtime', 0)
+                imdb = peli.get('imdb_id'); poster = peli.get('poster_path')
                 
-                zona = pytz.timezone('America/Argentina/Buenos_Aires')
-                ahora = datetime.now(zona)
-                fin = ahora + timedelta(minutes=dur) if dur else ahora
+                # Hora de finalización (Argentina)
+                fin = datetime.now(pytz.timezone('America/Argentina/Buenos_Aires')) + timedelta(minutes=dur)
                 
-                trailer_url = None
-                for v in peli.get('videos', {}).get('results', []):
-                    if v['site'] == 'YouTube' and v['type'] == 'Trailer':
-                        trailer_url = f"https://www.youtube.com/watch?v={v['key']}"
-                        break
-
-                cuerpo = txt.split("[BUSCAR:")[0].strip()
-                final_txt = (
-                    f"🍷 {cuerpo}\n\n"
-                    f"🎬 **{tit} ({año})**\n"
-                    f"⏱️ {dur} min | Termina: {fin.strftime('%H:%M')}\n\n"
-                    f"{resumen[:250]}..."
-                )
+                # Construcción de respuesta
+                cap = f"🍷 {txt.split('[BUSCAR:')[0].strip()}\n\n🎬 **{tit} ({año})**\n⏱️ {dur} min | Termina: {fin.strftime('%H:%M')}"
                 
-                btns = [[InlineKeyboardButton("▶️ Ver en Stremio", url=f"https://web.stremio.com/#/detail/movie/{imdb}/{imdb}")]]
-                if trailer_url: btns.append([InlineKeyboardButton("📽️ Ver Trailer", url=trailer_url)])
-                google_q = urllib.parse.quote(f"ver {orig} {año} online vose")
-                btns.append([InlineKeyboardButton("🌐 Buscar VOSE / Web", url=f"https://www.google.com/search?q={google_q}")])
+                btns = [
+                    [InlineKeyboardButton("▶️ Ver en Stremio", url=f"https://web.stremio.com/#/detail/movie/{imdb}/{imdb}")],
+                    [InlineKeyboardButton("🌐 Buscar VOSE / Web", url=f"https://www.google.com/search?q={urllib.parse.quote(f'ver {orig} {año} online vose')}")]
+                ]
 
                 if poster:
-                    url_poster = f"https://image.tmdb.org/t/p/w500{poster}"
-                    await context.bot.send_photo(chat_id=update.effective_chat.id, photo=url_poster, caption=final_txt, reply_markup=InlineKeyboardMarkup(btns), parse_mode='Markdown')
+                    await context.bot.send_photo(chat_id=update.effective_chat.id, photo=f"https://image.tmdb.org/t/p/w500{poster}", 
+                                               caption=cap, reply_markup=InlineKeyboardMarkup(btns), parse_mode='Markdown')
                     await espera.delete()
-                    print("✅ Respuesta enviada con póster", flush=True)
                 else:
-                    await espera.edit_text(final_txt, reply_markup=InlineKeyboardMarkup(btns), parse_mode='Markdown')
+                    await espera.edit_text(cap, reply_markup=InlineKeyboardMarkup(btns), parse_mode='Markdown')
                 return
 
         await espera.edit_text(txt)
+        
     except Exception as e:
-        print(f"🔥 ERROR CRÍTICO: {str(e)}", flush=True)
-        await espera.edit_text(f"Hubo un desliz en la cava. (Error: {str(e)[:40]}...)")
+        logger.error(f"Error crítico en proceso: {e}")
+        await espera.edit_text("Hubo un desliz en la cava. Reintentá en un momento.")
+
+# --- ARRANQUE CON REINTENTO AUTOMÁTICO ---
+def main():
+    threading.Thread(target=run_web, daemon=True).start()
+    
+    while True:
+        try:
+            logger.info("📡 Conectando Francine a Telegram...")
+            app = Application.builder().token(TOKEN).build()
+            app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje))
+            
+            # drop_pending_updates=True limpia los mensajes acumulados mientras el bot estuvo off
+            app.run_polling(drop_pending_updates=True, close_loop=False)
+            
+        except Conflict:
+            logger.warning("⚠️ Conflicto detectado. Otra instancia está activa. Reintentando en 10s...")
+            time.sleep(10)
+        except Exception as e:
+            logger.error(f"💥 Error inesperado: {e}. Reiniciando...")
+            time.sleep(5)
 
 if __name__ == "__main__":
-    threading.Thread(target=run_web, daemon=True).start()
-    print("🚀 FRANCINE V35 - ACTIVANDO ESCÁNER...", flush=True)
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje))
-    app.run_polling(drop_pending_updates=True)
+    main()
