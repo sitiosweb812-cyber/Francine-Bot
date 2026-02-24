@@ -18,14 +18,10 @@ PORT = int(os.environ.get("PORT", 8080))
 
 genai.configure(api_key=GEMINI_KEY)
 
-# --- 2. SERVIDOR WEB (Intacto para Render) ---
 web_app = Flask(__name__)
-
 @web_app.route('/')
-def home():
-    return "Francine V44: Modo Cirujano (1.5 Flash Forzado). 🍷", 200
+def home(): return "Francine V45: Buscador Inteligente. 🍷", 200
 
-# --- 3. LÓGICA DEL BOT ---
 def buscar_en_tmdb(query):
     try:
         q = query.replace("[BUSCAR:", "").replace("]", "").strip()
@@ -45,9 +41,32 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     espera = await update.message.reply_text("🍷 Francine está buscando en la cava...")
     
     try:
-        # --- LA INCISIÓN: FORZAMOS EL 1.5 FLASH MANUALMENTE ---
-        # Borramos la búsqueda automática. Le exigimos este modelo exacto para tener 1500 peticiones.
-        model = genai.GenerativeModel('gemini-1.5-flash', safety_settings=[
+        # --- INCISIÓN V45: RASTREADOR DE MODELOS 1.5 ---
+        modelos_disponibles = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        log_info(f"Modelos en tu API: {modelos_disponibles}") # Imprimimos la lista real
+        
+        target = None
+        # 1. Buscamos cualquier versión de 1.5 flash
+        for m in modelos_disponibles:
+            if '1.5-flash' in m:
+                target = m
+                break
+        
+        # 2. Si no hay flash, buscamos el 1.5 pro
+        if not target:
+            for m in modelos_disponibles:
+                if '1.5-pro' in m:
+                    target = m
+                    break
+                    
+        # 3. Fallback final
+        if not target:
+            target = modelos_disponibles[0]
+            
+        log_info(f"Modelo elegido: {target}")
+        
+        # Filtros apagados
+        model = genai.GenerativeModel(target, safety_settings=[
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
@@ -84,7 +103,6 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log_info(f"Error IA: {e}")
         await espera.edit_text("Hubo un desliz en la cava (Cupo de IA lleno o error temporal). Reintentá más tarde.")
 
-# --- 4. ARRANQUE DEL BOT (ESCUDO ANTI-CONFLICTOS INTACTO) ---
 def run_bot():
     log_info("🧹 Limpiando conexiones viejas...")
     try:
@@ -98,10 +116,10 @@ def run_bot():
     
     while True:
         try:
-            log_info("🚀 Lanzando Francine V44 (Modo Cirujano)...")
+            log_info("🚀 Lanzando Francine V45...")
             application.run_polling(drop_pending_updates=True, stop_signals=())
         except Conflict:
-            log_info("⚠️ Fantasma de Telegram detectado (Conflict). Esperando 10s para reintentar...")
+            log_info("⚠️ Fantasma detectado. Esperando 10s...")
             time.sleep(10)
         except Exception as e:
             log_info(f"Falla en el bot: {e}. Reintentando en 5s...")
