@@ -1,30 +1,28 @@
-import os, logging, requests, threading, urllib.parse, pytz, time
+import os, logging, requests, threading, urllib.parse, pytz, time, asyncio
 from flask import Flask
 from datetime import datetime, timedelta
 import google.generativeai as genai
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
-# --- 1. CONFIGURACIÓN DE LOGS ---
+# --- 1. CONFIGURACIÓN ---
 logging.basicConfig(level=logging.INFO)
 def log_info(msg):
     print(f"FRANCINE_LOG: {msg}", flush=True)
 
-# Variables de entorno
 TOKEN = os.environ.get('TELEGRAM_TOKEN', '').strip()
 TMDB_KEY = os.environ.get('TMDB_KEY', '').strip()
 GEMINI_KEY = os.environ.get('GEMINI_API_KEY', '').strip()
-PORT = int(os.environ.get("PORT", 8080)) # El puerto que Render exige
+PORT = int(os.environ.get("PORT", 8080))
 
-# Configuración IA
 genai.configure(api_key=GEMINI_KEY)
 
-# --- 2. SERVIDOR WEB (Prioridad #1 para Render) ---
+# --- 2. SERVIDOR WEB (Para Render) ---
 web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "Francine V40: Puerta abierta y cava lista. 🍷", 200
+    return "Francine V41: Sistema Estable. 🍷", 200
 
 # --- 3. LÓGICA DEL BOT ---
 def buscar_en_tmdb(query):
@@ -42,11 +40,10 @@ def buscar_en_tmdb(query):
 
 async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text: return
-    log_info(f"Mensaje recibido: {update.message.text}")
+    log_info(f"Mensaje de usuario: {update.message.text}")
     espera = await update.message.reply_text("🍷 Francine está eligiendo...")
     
     try:
-        # Selección automática de modelo
         models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         target = 'models/gemini-1.5-flash' if 'models/gemini-1.5-flash' in models else models[0]
         model = genai.GenerativeModel(target)
@@ -78,10 +75,10 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
         await espera.edit_text(txt)
     except Exception as e:
-        log_info(f"Error: {e}")
+        log_info(f"Error IA: {e}")
         await espera.edit_text("Hubo un desliz en la cava. Reintentá.")
 
-# --- 4. ARRANQUE MAESTRO ---
+# --- 4. ARRANQUE DEL BOT (LA SOLUCIÓN EXACTA) ---
 def run_bot():
     try:
         log_info("🧹 Limpiando conexiones viejas...")
@@ -89,17 +86,24 @@ def run_bot():
         time.sleep(2)
         
         log_info("🚀 Lanzando Francine...")
+        
+        # 1. Le creamos un entorno seguro en este segundo hilo
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        
         application = Application.builder().token(TOKEN).build()
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje))
-        application.run_polling(drop_pending_updates=True)
+        
+        # 2. stop_signals=() evita el error crítico de "set_wakeup_fd"
+        application.run_polling(drop_pending_updates=True, stop_signals=())
+        
     except Exception as e:
         log_info(f"Falla crítica en el bot: {e}")
 
 if __name__ == "__main__":
-    # PASO 1: Lanzamos el bot en un hilo separado
+    # Arrancamos a Francine en segundo plano
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
     
-    # PASO 2: Abrimos el puerto inmediatamente para Render
+    # Abrimos el puerto para Render en el hilo principal
     log_info(f"📢 Abriendo puerto {PORT}...")
     web_app.run(host='0.0.0.0', port=PORT)
