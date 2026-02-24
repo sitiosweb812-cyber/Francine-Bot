@@ -18,12 +18,12 @@ PORT = int(os.environ.get("PORT", 8080))
 
 genai.configure(api_key=GEMINI_KEY)
 
-# --- 2. SERVIDOR WEB (Para Render) ---
+# --- 2. SERVIDOR WEB (Intacto para Render) ---
 web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "Francine V43: Inmortal y Sin Censura. 🍷", 200
+    return "Francine V44: Modo Cirujano (1.5 Flash Forzado). 🍷", 200
 
 # --- 3. LÓGICA DEL BOT ---
 def buscar_en_tmdb(query):
@@ -45,11 +45,9 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     espera = await update.message.reply_text("🍷 Francine está buscando en la cava...")
     
     try:
-        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        target = 'models/gemini-1.5-flash' if 'models/gemini-1.5-flash' in models else models[0]
-        
-        # Filtros apagados para que no se asuste con Tarantino, Terror, etc.
-        model = genai.GenerativeModel(target, safety_settings=[
+        # --- LA INCISIÓN: FORZAMOS EL 1.5 FLASH MANUALMENTE ---
+        # Borramos la búsqueda automática. Le exigimos este modelo exacto para tener 1500 peticiones.
+        model = genai.GenerativeModel('gemini-1.5-flash', safety_settings=[
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
@@ -86,7 +84,7 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log_info(f"Error IA: {e}")
         await espera.edit_text("Hubo un desliz en la cava (Cupo de IA lleno o error temporal). Reintentá más tarde.")
 
-# --- 4. ARRANQUE DEL BOT (ESCUDO ANTI-CONFLICTOS) ---
+# --- 4. ARRANQUE DEL BOT (ESCUDO ANTI-CONFLICTOS INTACTO) ---
 def run_bot():
     log_info("🧹 Limpiando conexiones viejas...")
     try:
@@ -100,7 +98,7 @@ def run_bot():
     
     while True:
         try:
-            log_info("🚀 Lanzando Francine V43...")
+            log_info("🚀 Lanzando Francine V44 (Modo Cirujano)...")
             application.run_polling(drop_pending_updates=True, stop_signals=())
         except Conflict:
             log_info("⚠️ Fantasma de Telegram detectado (Conflict). Esperando 10s para reintentar...")
